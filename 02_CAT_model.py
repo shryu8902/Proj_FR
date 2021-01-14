@@ -48,7 +48,7 @@ val_output_ = np.load('./DATA/test_output.npy')
 test_output_ = np.load('./DATA/untrain_output.npy')
 #%%
 from sklearn.preprocessing import KBinsDiscretizer
-NBIN=128
+NBIN=64
 
 discretizer = KBinsDiscretizer(n_bins=NBIN, encode='onehot-dense', strategy='quantile')
 discretizer.fit(train_output_.reshape(-1,1))

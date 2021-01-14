@@ -97,7 +97,6 @@ def diff_loss(y_true, y_pred):
 from tensorflow.keras.layers import Input, RepeatVector,Bidirectional,LSTM,TimeDistributed,Dense,Flatten, LeakyReLU,Conv1D, PReLU, Dropout, Concatenate
 from tensorflow.keras.models import Model
 
-
 def RNN_model_v3(n_cell=256, n_layers=2, FN=[128,64], dr_rates=0.2, PE=None, PE_d = 16):
     inputs = Input(shape =(16) ,name='input')
     num_rows = tf.shape(inputs,name='num_rows')[0]
@@ -124,24 +123,137 @@ def RNN_model_v3(n_cell=256, n_layers=2, FN=[128,64], dr_rates=0.2, PE=None, PE_
     model= Model(inputs, outputs)
     return model
 
-# def FNN_model():
-#     inputs = Input(shape=(16))
-#     layer_1 = Dense(128)(inputs)
-#     layer_2 = PReLU()(layer_1)
-#     layer_2 = Dropout(0.2)(layer_2)
-#     layer_3 = Dense(256)(layer_2)
-#     layer_4 = PReLU()(layer_3)
-#     layer_4 = Dropout(0.2)(layer_4)
-#     layer_5 = Dense(360)(layer_4)
-#     layer_6 = PReLU()(layer_5)
-#     layer_6 = Dropout(0.2)(layer_6)
-#     layer_7 = Dense(360)(layer_6)
-#     layer_8 = PReLU()(layer_7)
-#     outputs = layer_8
-#     model = Model(inputs,outputs)
-#     return model
+def Base_FNN_model():
+    inputs = Input(shape=(16))
+    layer_1 = Dense(64,kernel_initializer='lecun_normal', activation='selu')(inputs)
+    layer_2 = Dense(128,kernel_initializer='lecun_normal', activation='selu')(layer_1)
+    layer_3= Dense(256,kernel_initializer='lecun_normal', activation='selu')(layer_2)
+    layer_4= Dense(512,kernel_initializer='lecun_normal', activation='selu')(layer_3)
+    layer_4_dr = Dropout(0.2)(layer_4)
+    layer_5 = Dense(360)(layer_4_dr)
+    outputs = layer_5
+    model = Model(inputs,outputs)
+    return model
 #%%
 tf.random.set_seed(0)
+vername = 'FNN-0-S0'
+# vername = 'RNN-0-S0' # RNN_model_v3(128,2,[64],dr_rates=0.2, PE=None)
+base_model = Base_FNN_model()
+# base_model = RNN_model_v3(128,2,[64],dr_rates=0.2, PE=None)
+base_model.compile(optimizer = 'adam',
+                    loss = 'mean_squared_error',
+                    # loss=diff_loss,
+                    metrics = ['mean_absolute_error','mean_squared_error'])
+ensure_dir('./MODEL/FNN/{}'.format(vername))
+path = './MODEL/FNN/{}'.format(vername)+'/e{epoch:04d}.ckpt'
+checkpoint = ModelCheckpoint(path, monitor = 'val_loss',verbose = 1,
+            save_best_only = True,
+            mode = 'auto',
+            save_weights_only = True)
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.8, patience=5, min_lr=1e-5)
+early_stopping = EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)
+hist=base_model.fit(train_input,train_output,
+               validation_data=(val_input,val_output),
+               callbacks=[checkpoint,reduce_lr,early_stopping],epochs=100,batch_size=256)
+#%%
+plt.plot(hist.history['loss'])
+plt.plot(hist.history['val_loss'])
+#%%
+RNN_ver = 'RNN-0-S0'
+RNN_latest = tf.train.latest_checkpoint('./MODEL/FNN/{}'.format(RNN_ver))
+RNN = RNN_model_v3(128,2,[64],dr_rates=0.2, PE=None)
+RNN.load_weights(RNN_latest)
+FNN_ver = 'FNN-0-S0' 
+FNN_latest = tf.train.latest_checkpoint('./MODEL/FNN/{}'.format(FNN_ver))
+FNN = Base_FNN_model()
+FNN.load_weights(FNN_latest)
+# train_output_hat = base_model.predict(train_input,batch_size=128)
+# train_output_hat_ = OUT_SCALER[SCALE].inverse_transform(train_output_hat.reshape(-1,1)).reshape(-1,360)
+# val_output_hat = base_model.predict(val_input,batch_size=128)
+# val_output_hat_ = OUT_SCALER[SCALE].inverse_transform(val_output_hat.reshape(-1,1)).reshape(-1,360)
+RNN_train = RNN.predict(train_input,batch_size=128)
+RNN_train_ = OUT_SCALER[SCALE].inverse_transform(RNN_train.reshape(-1,1)).reshape(-1,360)
+RNN_test_in = RNN.predict(test_in_input,batch_size=128)
+RNN_test_in_ = OUT_SCALER[SCALE].inverse_transform(RNN_test_in.reshape(-1,1)).reshape(-1,360)
+RNN_test_out = RNN.predict(test_out_input,batch_size=128)
+RNN_test_out_ = OUT_SCALER[SCALE].inverse_transform(RNN_test_out.reshape(-1,1)).reshape(-1,360)
+
+FNN_train = FNN.predict(train_input,batch_size=128)
+FNN_train_ = OUT_SCALER[SCALE].inverse_transform(FNN_train.reshape(-1,1)).reshape(-1,360)
+FNN_test_in = FNN.predict(test_in_input,batch_size=128)
+FNN_test_in_ = OUT_SCALER[SCALE].inverse_transform(FNN_test_in.reshape(-1,1)).reshape(-1,360)
+FNN_test_out = FNN.predict(test_out_input,batch_size=128)
+FNN_test_out_ = OUT_SCALER[SCALE].inverse_transform(FNN_test_out.reshape(-1,1)).reshape(-1,360)
+
+del(RNN_train,RNN_test_in, RNN_test_out, FNN_train,FNN_test_in, FNN_test_out)
+#%%
+np.round(np.mean(MAPE(test_in_output_, FNN_test_in_)),3)
+np.round(np.mean(MAPE(test_in_output_, RNN_test_in_)),3)
+np.round(np.mean(MAPE(test_out_output_, FNN_test_out_)),3)
+np.round(np.mean(MAPE(test_out_output_, RNN_test_out_)),3)
+np.round(np.mean(MSE(test_in_output_, FNN_test_in_)),3)
+np.round(np.mean(MSE(test_in_output_, RNN_test_in_)),3)
+np.round(np.mean(MSE(test_out_output_, FNN_test_out_)),3)
+np.round(np.mean(MSE(test_out_output_, RNN_test_out_)),3)
+
+#%%
+# untrain : SGTR: 273(0),274(1),141825(17998),141826(17999)141790
+plt.style.use(['science','ieee','no-latex'])
+index = 141790
+df_test = pd.DataFrame(test_out_)
+iloc = df_test.loc[df_test[0]==index].index[0]
+if df_test.iloc[iloc][16] == 0:
+    ttype = 'SGTR'
+else :
+    ttype = 'MSLB'
+plt.plot(test_out_output_[iloc,:],label='True value')
+plt.plot(RNN_test_out_[iloc,:],label='Simple RNN')
+plt.plot(FNN_test_out_[iloc,:],label='Simple FNN')
+# plt.plot(test_output_hat_hat_[iloc,:],label='Fine')
+plt.tight_layout()
+plt.legend()
+plt.grid()
+plt.ylabel('Primary Pressure ($kg/cm^2\cdot a$)')
+plt.xlabel('Time (10 seconds)')
+plt.title('Test set, Index : {}, Type: {}'.format(str(index),ttype))
+plt.savefig('./Figs/1-1.png',dpi=300)
+#%%
+# train : SGTR: 35340(0),110523(1),28454(17998),124348(17999)115869
+index = 35340
+df_test = pd.DataFrame(train_)
+iloc = df_test.loc[df_test[0]==index].index[0]
+if df_test.iloc[iloc][16] == 0:
+    ttype = 'SGTR'
+else :
+    ttype = 'MSLB'
+plt.plot(train_output_[iloc,:],label='True value')
+plt.plot(RNN_train_[iloc,:],label='Simple RNN')
+plt.plot(FNN_train_[iloc,:],label='Simple FNN')
+# plt.plot(test_output_hat_hat_[iloc,:],label='Fine')
+plt.tight_layout()
+plt.legend()
+plt.ylabel('Primary Pressure ($kg/cm^2\cdot a$)')
+plt.xlabel('Time (10 seconds)')
+plt.grid()
+
+plt.title('Training set, Index : {}, Type: {}'.format(str(index),ttype))
+plt.savefig('./Figs/1-2.png',dpi=300)
+#%%
+# val : SGTR : 26848(0),18902(1), MSLB 113865(7), 139096(8)
+index = 26848
+df_test = pd.DataFrame(test_in_)
+iloc = df_test.loc[df_test[0]==index].index[0]
+if df_test.iloc[iloc][16] == 0:
+    ttype = 'SGTR'
+else :
+    ttype = 'MSLB'
+plt.plot(val_output_[iloc,:],label='True')
+plt.plot(val_output_hat_[iloc,:],label='Fast running')
+plt.legend()
+plt.grid()
+plt.title('Index : {}, Type: {}'.format(str(index),ttype))
+
+#%%
 vername = 'FR26'
 base_model = RNN_model_v3(256,3,[128,64],0.2,8)
 # base_model = RNN_model_ver2(256,0.2,PE=True, PE_type=8)
@@ -164,6 +276,7 @@ hist=base_model.fit(train_input,train_output,
                callbacks=[checkpoint,reduce_lr,early_stopping],epochs=100,batch_size=256)
 # with open('./MODEL/FR_RNN/{}/hist.pkl'.format(vername), 'wb') as f:
 #         pickle.dump(hist.history,f)
+
 
 
 #%%
